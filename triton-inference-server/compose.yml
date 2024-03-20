@@ -1,0 +1,60 @@
+# =========================================
+# Triton Inference Server
+#
+# Requires:
+# - Docker Engine 19.03.0+
+# - Docker Compose 1.27.0+
+# =========================================
+
+networks:
+  triton-net:
+    external: true
+    name: triton-net
+
+services:
+  triton-server:
+    image: nvcr.io/nvidia/tritonserver:22.08-py3
+    container_name: triton-server
+    ports:
+      - "8001:8001"
+      - "8002:8002"
+    environment:
+      - AWS_S3_ENDPOINT=${AWS_S3_ENDPOINT:?Variable not set}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:?Variable not set}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:?Variable not set}
+    networks:
+      - triton-net
+    deploy:
+     resources:
+       reservations:
+         devices:
+         - driver: nvidia
+           capabilities: [gpu]
+    command: tritonserver --model-repository=s3://${AWS_S3_ENDPOINT}/repository --model-control-mode="explicit" --log-info true
+    shm_size: 20gb
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v2/health/ready"]
+      start_period: 20s
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+
+  proxy:
+    image: nginx:stable-alpine
+    container_name: triton-server-proxy
+    networks:
+      - triton-net
+    ports:
+      - 8000:8000
+    restart: unless-stopped
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      triton-server:
+        condition: service_healthy
+
